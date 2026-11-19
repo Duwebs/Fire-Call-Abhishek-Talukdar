@@ -28,8 +28,8 @@
   <div id="info">Tap "START LISTENING" and allow Mic</div>
 
   <div class="slider-box">
-    Sensitivity Threshold: <span id="threshVal">65</span>%<br>
-    <input type="range" id="threshold" min="20" max="95" value="65" oninput="document.getElementById('threshVal').innerText=this.value">
+    Trigger Level (Higher = Harder to Trigger): <span id="threshVal">75</span>%<br>
+    <input type="range" id="threshold" min="30" max="95" value="75" oninput="document.getElementById('threshVal').innerText=this.value">
   </div>
 
   <div id="alert"></div>
@@ -47,29 +47,51 @@
       keepScreenAwake();
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Auto Gain Control band rakha hai taaki chhoti awaaz amplify na ho
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            autoGainControl: false,
+            noiseSuppression: false,
+            echoCancellation: false
+          }
+        });
+
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioCtx.createMediaStreamSource(stream);
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 512;
         source.connect(analyser);
 
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const freqData = new Uint8Array(analyser.frequencyBinCount);
+        const timeData = new Uint8Array(analyser.fftSize);
         const bar = document.getElementById('bar');
         const info = document.getElementById('info');
         const alertBox = document.getElementById('alert');
 
-        info.innerText = "Listening for buzzer sound...";
+        info.innerText = "Listening (Noise Filtered)...";
 
         function checkSound() {
-          analyser.getByteFrequencyData(dataArray);
+          analyser.getByteFrequencyData(freqData);
+          analyser.getByteTimeDomainData(timeData);
 
-          let sum = 0;
-          for (let i = 10; i < 90; i++) {
-            sum += dataArray[i];
+          // 1. Real Loudness (RMS) check - chhoti awaaz yahan filter hogi
+          let sumSquares = 0;
+          for (let i = 0; i < timeData.length; i++) {
+            const norm = (timeData[i] - 128) / 128;
+            sumSquares += norm * norm;
           }
-          const avg = sum / 80;
-          const level = Math.min(100, Math.round((avg / 255) * 100 * 1.8));
+          const rms = Math.sqrt(sumSquares / timeData.length);
+          const volumeScore = Math.min(100, Math.round(rms * 250));
+
+          // 2. High-Pitch Buzzer Frequency (2000Hz - 4500Hz) check
+          let buzzerSum = 0;
+          for (let i = 22; i < 55; i++) {
+            buzzerSum += freqData[i];
+          }
+          const buzzerScore = Math.min(100, Math.round((buzzerSum / 33 / 255) * 100));
+
+          // Dono high honge tabhi level badhega (normal baatcheet ignore hogi)
+          const level = Math.round((volumeScore * 0.6) + (buzzerScore * 0.4));
           const threshold = parseInt(document.getElementById('threshold').value);
 
           bar.style.width = level + "%";
@@ -78,22 +100,22 @@
           if (!callTriggered) {
             if (level >= threshold) {
               loudFrames++;
-              if (loudFrames >= 20) {
+              // Lagatar ~1.2 second (70 frames) tak tez buzzer baje tabhi trigger hoga
+              if (loudFrames >= 70) {
                 callTriggered = true;
-                // Yeh exact text screen par aate hi MacroDroid direct call laga dega
                 alertBox.innerText = "BUZZER DETECTED!";
                 info.innerText = "Calling +918882359259 via MacroDroid...";
 
-                // 30 second baad wapas reset
                 setTimeout(() => {
                   callTriggered = false;
                   loudFrames = 0;
                   alertBox.innerText = "";
-                  info.innerText = "Listening for buzzer sound...";
+                  info.innerText = "Listening (Noise Filtered)...";
                 }, 30000);
               }
             } else {
-              loudFrames = Math.max(0, loudFrames - 2);
+              // Awaaz rukte hi counter turant neeche girega
+              loudFrames = Math.max(0, loudFrames - 5);
             }
           }
           requestAnimationFrame(checkSound);
