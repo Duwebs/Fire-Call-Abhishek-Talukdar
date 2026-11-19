@@ -8,31 +8,29 @@
   <style>
     body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; padding: 10px; }
     .cam-box { position: relative; display: inline-block; width: 100%; max-width: 420px; }
-    video { width: 100%; border: 2px solid #333; border-radius: 10px; }
-    /* Beech ka focus box taaki aap text ko iske andar rakhein */
+    video { width: 100%; border: 2px solid #333; border-radius: 10px; background: #111; }
     .guide { position: absolute; top: 25%; left: 10%; width: 80%; height: 50%; border: 2px dashed #0f0; pointer-events: none; box-sizing: border-box; }
-    #status { font-size: 14px; margin: 10px 0; color: #ccc; word-break: break-word; }
+    #status { font-size: 14px; margin: 10px 0; color: #ffeb3b; word-break: break-word; }
     #detected { color: #ff3b30; font-weight: bold; font-size: 20px; margin-top: 8px; }
   </style>
 </head>
 <body>
-  <h3>OCR Alert Scanner (High Contrast)</h3>
+  <h3>OCR Alert Scanner</h3>
   <div class="cam-box">
-    <video id="video" autoplay playsinline></video>
+    <video id="video" autoplay playsinline muted></video>
     <div class="guide"></div>
   </div>
   <canvas id="canvas" style="display:none;"></canvas>
-  <div id="status">Loading OCR engine...</div>
+  <div id="status">1/2: Opening camera...</div>
   <div id="detected"></div>
 
   <script>
     const PHONE_NUMBER = "+918882359259";
-    // Inme se koi bhi ek word dikhte hi call lag jayegi
     const KEYWORDS = ["emergency", "fire", "alert", "detected"];
 
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const statusEl = document.getElementById('status');
     const detectedEl = document.getElementById('detected');
     let callTriggered = false;
@@ -43,24 +41,34 @@
     }
     keepScreenAwake();
 
-    async function init() {
-      // Fast OCR worker initialize karein
-      worker = await Tesseract.createWorker('eng');
-      statusEl.innerText = "Starting camera...";
+    async function startApp() {
+      try {
+        // Step 1: Pehle camera start karein
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" }
+        });
+        video.srcObject = stream;
+        await video.play();
+        statusEl.innerText = "2/2: Loading fast OCR (2 sec)...";
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
-      });
-      video.srcObject = stream;
-      statusEl.innerText = "Scanning inside green box...";
+        // Step 2: Light-weight (1.5MB) English OCR model load karein
+        worker = await Tesseract.createWorker('eng', 1, {
+          langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast'
+        });
 
-      setInterval(scanFrame, 1500);
+        statusEl.style.color = "#0f0";
+        statusEl.innerText = "Ready! Point green box at text...";
+        setInterval(scanFrame, 1500);
+
+      } catch (err) {
+        statusEl.style.color = "#ff3b30";
+        statusEl.innerText = "Error: " + err.message;
+      }
     }
 
     async function scanFrame() {
-      if (callTriggered || !worker || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+      if (callTriggered || !worker || video.readyState < 2) return;
 
-      // Sirf beech ka 80% x 50% area crop karein jahan green box hai (fast & accurate)
       const cropX = video.videoWidth * 0.1;
       const cropY = video.videoHeight * 0.25;
       const cropW = video.videoWidth * 0.8;
@@ -68,15 +76,24 @@
 
       canvas.width = cropW;
       canvas.height = cropH;
-
-      // Contrast aur Grayscale badhayein taaki screen glare kam ho
-      ctx.filter = "grayscale(100%) contrast(180%)";
       ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
+      // High-contrast grayscale conversion (har mobile browser mein kaam karega)
+      const imgData = ctx.getImageData(0, 0, cropW, cropH);
+      const data = imgData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        const contrast = avg > 128 ? 255 : 0; // Pure black & white threshold
+        data[i] = data[i + 1] = data[i + 2] = contrast;
+      }
+      ctx.putImageData(imgData, 0, 0);
+
       const { data: { text } } = await worker.recognize(canvas);
-      const cleanText = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
-      
-      statusEl.innerText = "Read: " + (cleanText.trim().slice(0, 60) || "Scanning...");
+      const cleanText = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim();
+
+      if (cleanText.length > 0) {
+        statusEl.innerText = "Read: " + cleanText.slice(0, 50);
+      }
 
       const matchedWord = KEYWORDS.find(word => cleanText.includes(word));
       if (matchedWord) {
@@ -92,7 +109,7 @@
       }
     }
 
-    init().catch(err => { statusEl.innerText = "Error: " + err.message; });
+    startApp();
   </script>
 </body>
 </html>
