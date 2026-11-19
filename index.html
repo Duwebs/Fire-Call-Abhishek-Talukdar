@@ -11,7 +11,7 @@
     .meter-box { width: 100%; max-width: 350px; height: 28px; background: #222; border-radius: 14px; margin: 25px auto; overflow: hidden; border: 1px solid #444; }
     #bar { height: 100%; width: 0%; background: #0f0; transition: width 0.08s; }
     #info { font-size: 15px; color: #aaa; margin-top: 10px; }
-    #alert { color: #ff3b30; font-size: 22px; font-weight: bold; margin-top: 20px; }
+    #alert { color: #ff3b30; font-size: 26px; font-weight: bold; margin-top: 25px; letter-spacing: 1px; }
     .slider-box { margin-top: 25px; color: #ccc; font-size: 14px; }
     input[type=range] { width: 80%; max-width: 300px; accent-color: #0f0; }
   </style>
@@ -35,7 +35,6 @@
   <div id="alert"></div>
 
   <script>
-    const PHONE_NUMBER = "+918882359259";
     let callTriggered = false;
     let loudFrames = 0;
 
@@ -65,7 +64,6 @@
         function checkSound() {
           analyser.getByteFrequencyData(dataArray);
 
-          // Buzzer ki high/mid-high frequencies (500Hz - 4000Hz) ka average nikalen
           let sum = 0;
           for (let i = 10; i < 90; i++) {
             sum += dataArray[i];
@@ -80,17 +78,18 @@
           if (!callTriggered) {
             if (level >= threshold) {
               loudFrames++;
-              // Lagatar ~0.4 second tak buzzer baje tabhi call kare (chhoti-moti awaaz ignore hogi)
               if (loudFrames >= 20) {
                 callTriggered = true;
-                alertBox.innerText = "BUZZER DETECTED! Calling...";
-                window.location.href = `tel:${PHONE_NUMBER}`;
+                // Yeh exact text screen par aate hi MacroDroid direct call laga dega
+                alertBox.innerText = "BUZZER DETECTED!";
+                info.innerText = "Calling +918882359259 via MacroDroid...";
 
                 // 30 second baad wapas reset
                 setTimeout(() => {
                   callTriggered = false;
                   loudFrames = 0;
                   alertBox.innerText = "";
+                  info.innerText = "Listening for buzzer sound...";
                 }, 30000);
               }
             } else {
