@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alert Camera Scanner</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; padding: 12px; }
+    video { width: 100%; max-width: 420px; border: 2px solid #222; border-radius: 10px; }
+    #status { font-size: 15px; margin: 12px 0; color: #aaa; }
+    #detected { color: #ff3b30; font-weight: bold; font-size: 20px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h3>OCR Alert Scanner Active</h3>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <div id="status">Starting camera...</div>
+  <div id="detected"></div>
+
+  <script>
+    const PHONE_NUMBER = "+918882359259";
+    const KEYWORDS = ["fire alert", "emergency alert", "location"];
+    
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const detectedEl = document.getElementById('detected');
+    let callTriggered = false;
+
+    // Screen ko on rakhne ke liye Wake Lock
+    async function keepScreenAwake() {
+      try {
+        if ('wakeLock' in navigator) {
+          await navigator.wakeLock.request('screen');
+        }
+      } catch (e) {}
+    }
+    keepScreenAwake();
+
+    // Back camera start karein
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      .then(stream => { 
+        video.srcObject = stream; 
+        statusEl.innerText = "Scanning camera feed...";
+      })
+      .catch(err => { statusEl.innerText = "Camera Error: " + err; });
+
+    // Har 2.5 second mein frame scan karein
+    setInterval(async () => {
+      if (callTriggered || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      statusEl.innerText = "Reading text...";
+      const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
+      const cleanText = text.toLowerCase();
+      statusEl.innerText = "Last read: " + (cleanText.slice(0, 45).replace(/\n/g, " ") || "No text");
+
+      const matched = KEYWORDS.some(word => cleanText.includes(word));
+      if (matched) {
+        callTriggered = true;
+        detectedEl.innerText = "ALERT DETECTED! Calling...";
+        window.location.href = `tel:${PHONE_NUMBER}`;
+
+        // 30 second baad scanner wapas reset hoga
+        setTimeout(() => {
+          callTriggered = false;
+          detectedEl.innerText = "";
+          statusEl.innerText = "Scanning resumed...";
+        }, 30000);
+      }
+    }, 2500);
+  </script>
+</body>
+</html>
