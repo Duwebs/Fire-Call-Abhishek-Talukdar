@@ -3,113 +3,108 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Alert Camera Scanner</title>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <title>Buzzer Alert Detector</title>
   <style>
-    body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; padding: 10px; }
-    .cam-box { position: relative; display: inline-block; width: 100%; max-width: 420px; }
-    video { width: 100%; border: 2px solid #333; border-radius: 10px; background: #111; }
-    .guide { position: absolute; top: 25%; left: 10%; width: 80%; height: 50%; border: 2px dashed #0f0; pointer-events: none; box-sizing: border-box; }
-    #status { font-size: 14px; margin: 10px 0; color: #ffeb3b; word-break: break-word; }
-    #detected { color: #ff3b30; font-weight: bold; font-size: 20px; margin-top: 8px; }
+    body { background: #050505; color: #fff; font-family: monospace; text-align: center; padding: 20px; margin: 0; }
+    h2 { color: #0f0; margin-bottom: 5px; }
+    button { background: #0f0; color: #000; border: none; padding: 15px 30px; font-size: 18px; font-weight: bold; border-radius: 8px; cursor: pointer; margin-top: 20px; }
+    .meter-box { width: 100%; max-width: 350px; height: 28px; background: #222; border-radius: 14px; margin: 25px auto; overflow: hidden; border: 1px solid #444; }
+    #bar { height: 100%; width: 0%; background: #0f0; transition: width 0.08s; }
+    #info { font-size: 15px; color: #aaa; margin-top: 10px; }
+    #alert { color: #ff3b30; font-size: 22px; font-weight: bold; margin-top: 20px; }
+    .slider-box { margin-top: 25px; color: #ccc; font-size: 14px; }
+    input[type=range] { width: 80%; max-width: 300px; accent-color: #0f0; }
   </style>
 </head>
 <body>
-  <h3>OCR Alert Scanner</h3>
-  <div class="cam-box">
-    <video id="video" autoplay playsinline muted></video>
-    <div class="guide"></div>
+  <h2>BUZZER CALL TRIGGER</h2>
+  <p style="color:#888; font-size:13px;">Target: +918882359259</p>
+
+  <button id="startBtn" onclick="startListening()">START LISTENING</button>
+
+  <div class="meter-box">
+    <div id="bar"></div>
   </div>
-  <canvas id="canvas" style="display:none;"></canvas>
-  <div id="status">1/2: Opening camera...</div>
-  <div id="detected"></div>
+  <div id="info">Tap "START LISTENING" and allow Mic</div>
+
+  <div class="slider-box">
+    Sensitivity Threshold: <span id="threshVal">65</span>%<br>
+    <input type="range" id="threshold" min="20" max="95" value="65" oninput="document.getElementById('threshVal').innerText=this.value">
+  </div>
+
+  <div id="alert"></div>
 
   <script>
     const PHONE_NUMBER = "+918882359259";
-    const KEYWORDS = ["emergency", "fire", "alert", "detected"];
-
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const statusEl = document.getElementById('status');
-    const detectedEl = document.getElementById('detected');
     let callTriggered = false;
-    let worker = null;
+    let loudFrames = 0;
 
     async function keepScreenAwake() {
       try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch (e) {}
     }
-    keepScreenAwake();
 
-    async function startApp() {
+    async function startListening() {
+      document.getElementById('startBtn').style.display = 'none';
+      keepScreenAwake();
+
       try {
-        // Step 1: Pehle camera start karein
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" }
-        });
-        video.srcObject = stream;
-        await video.play();
-        statusEl.innerText = "2/2: Loading fast OCR (2 sec)...";
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
 
-        // Step 2: Light-weight (1.5MB) English OCR model load karein
-        worker = await Tesseract.createWorker('eng', 1, {
-          langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast'
-        });
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const bar = document.getElementById('bar');
+        const info = document.getElementById('info');
+        const alertBox = document.getElementById('alert');
 
-        statusEl.style.color = "#0f0";
-        statusEl.innerText = "Ready! Point green box at text...";
-        setInterval(scanFrame, 1500);
+        info.innerText = "Listening for buzzer sound...";
+
+        function checkSound() {
+          analyser.getByteFrequencyData(dataArray);
+
+          // Buzzer ki high/mid-high frequencies (500Hz - 4000Hz) ka average nikalen
+          let sum = 0;
+          for (let i = 10; i < 90; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / 80;
+          const level = Math.min(100, Math.round((avg / 255) * 100 * 1.8));
+          const threshold = parseInt(document.getElementById('threshold').value);
+
+          bar.style.width = level + "%";
+          bar.style.background = level >= threshold ? "#ff3b30" : "#0f0";
+
+          if (!callTriggered) {
+            if (level >= threshold) {
+              loudFrames++;
+              // Lagatar ~0.4 second tak buzzer baje tabhi call kare (chhoti-moti awaaz ignore hogi)
+              if (loudFrames >= 20) {
+                callTriggered = true;
+                alertBox.innerText = "BUZZER DETECTED! Calling...";
+                window.location.href = `tel:${PHONE_NUMBER}`;
+
+                // 30 second baad wapas reset
+                setTimeout(() => {
+                  callTriggered = false;
+                  loudFrames = 0;
+                  alertBox.innerText = "";
+                }, 30000);
+              }
+            } else {
+              loudFrames = Math.max(0, loudFrames - 2);
+            }
+          }
+          requestAnimationFrame(checkSound);
+        }
+        checkSound();
 
       } catch (err) {
-        statusEl.style.color = "#ff3b30";
-        statusEl.innerText = "Error: " + err.message;
+        document.getElementById('info').innerText = "Mic Error: " + err.message;
       }
     }
-
-    async function scanFrame() {
-      if (callTriggered || !worker || video.readyState < 2) return;
-
-      const cropX = video.videoWidth * 0.1;
-      const cropY = video.videoHeight * 0.25;
-      const cropW = video.videoWidth * 0.8;
-      const cropH = video.videoHeight * 0.5;
-
-      canvas.width = cropW;
-      canvas.height = cropH;
-      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-      // High-contrast grayscale conversion (har mobile browser mein kaam karega)
-      const imgData = ctx.getImageData(0, 0, cropW, cropH);
-      const data = imgData.data;
-      for (let i = 0; i < data.length; i += 4) {
-        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-        const contrast = avg > 128 ? 255 : 0; // Pure black & white threshold
-        data[i] = data[i + 1] = data[i + 2] = contrast;
-      }
-      ctx.putImageData(imgData, 0, 0);
-
-      const { data: { text } } = await worker.recognize(canvas);
-      const cleanText = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim();
-
-      if (cleanText.length > 0) {
-        statusEl.innerText = "Read: " + cleanText.slice(0, 50);
-      }
-
-      const matchedWord = KEYWORDS.find(word => cleanText.includes(word));
-      if (matchedWord) {
-        callTriggered = true;
-        detectedEl.innerText = `ALERT DETECTED (${matchedWord.toUpperCase()})! Calling...`;
-        window.location.href = `tel:${PHONE_NUMBER}`;
-
-        setTimeout(() => {
-          callTriggered = false;
-          detectedEl.innerText = "";
-          statusEl.innerText = "Scanning resumed...";
-        }, 30000);
-      }
-    }
-
-    startApp();
   </script>
 </body>
 </html>
