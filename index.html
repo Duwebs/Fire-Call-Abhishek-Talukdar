@@ -6,75 +6,93 @@
   <title>Alert Camera Scanner</title>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
-    body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; padding: 12px; }
-    video { width: 100%; max-width: 420px; border: 2px solid #222; border-radius: 10px; }
-    #status { font-size: 15px; margin: 12px 0; color: #aaa; }
+    body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; padding: 10px; }
+    .cam-box { position: relative; display: inline-block; width: 100%; max-width: 420px; }
+    video { width: 100%; border: 2px solid #333; border-radius: 10px; }
+    /* Beech ka focus box taaki aap text ko iske andar rakhein */
+    .guide { position: absolute; top: 25%; left: 10%; width: 80%; height: 50%; border: 2px dashed #0f0; pointer-events: none; box-sizing: border-box; }
+    #status { font-size: 14px; margin: 10px 0; color: #ccc; word-break: break-word; }
     #detected { color: #ff3b30; font-weight: bold; font-size: 20px; margin-top: 8px; }
   </style>
 </head>
 <body>
-  <h3>OCR Alert Scanner Active</h3>
-  <video id="video" autoplay playsinline></video>
+  <h3>OCR Alert Scanner (High Contrast)</h3>
+  <div class="cam-box">
+    <video id="video" autoplay playsinline></video>
+    <div class="guide"></div>
+  </div>
   <canvas id="canvas" style="display:none;"></canvas>
-  <div id="status">Starting camera...</div>
+  <div id="status">Loading OCR engine...</div>
   <div id="detected"></div>
 
   <script>
     const PHONE_NUMBER = "+918882359259";
-    const KEYWORDS = ["fire alert", "emergency alert", "location"];
-    
+    // Inme se koi bhi ek word dikhte hi call lag jayegi
+    const KEYWORDS = ["emergency", "fire", "alert", "detected"];
+
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
     const detectedEl = document.getElementById('detected');
     let callTriggered = false;
+    let worker = null;
 
-    // Screen ko on rakhne ke liye Wake Lock
     async function keepScreenAwake() {
-      try {
-        if ('wakeLock' in navigator) {
-          await navigator.wakeLock.request('screen');
-        }
-      } catch (e) {}
+      try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch (e) {}
     }
     keepScreenAwake();
 
-    // Back camera start karein
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-      .then(stream => { 
-        video.srcObject = stream; 
-        statusEl.innerText = "Scanning camera feed...";
-      })
-      .catch(err => { statusEl.innerText = "Camera Error: " + err; });
+    async function init() {
+      // Fast OCR worker initialize karein
+      worker = await Tesseract.createWorker('eng');
+      statusEl.innerText = "Starting camera...";
 
-    // Har 2.5 second mein frame scan karein
-    setInterval(async () => {
-      if (callTriggered || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      video.srcObject = stream;
+      statusEl.innerText = "Scanning inside green box...";
 
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      setInterval(scanFrame, 1500);
+    }
 
-      statusEl.innerText = "Reading text...";
-      const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
-      const cleanText = text.toLowerCase();
-      statusEl.innerText = "Last read: " + (cleanText.slice(0, 45).replace(/\n/g, " ") || "No text");
+    async function scanFrame() {
+      if (callTriggered || !worker || video.readyState !== video.HAVE_ENOUGH_DATA) return;
 
-      const matched = KEYWORDS.some(word => cleanText.includes(word));
-      if (matched) {
+      // Sirf beech ka 80% x 50% area crop karein jahan green box hai (fast & accurate)
+      const cropX = video.videoWidth * 0.1;
+      const cropY = video.videoHeight * 0.25;
+      const cropW = video.videoWidth * 0.8;
+      const cropH = video.videoHeight * 0.5;
+
+      canvas.width = cropW;
+      canvas.height = cropH;
+
+      // Contrast aur Grayscale badhayein taaki screen glare kam ho
+      ctx.filter = "grayscale(100%) contrast(180%)";
+      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+      const { data: { text } } = await worker.recognize(canvas);
+      const cleanText = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
+      
+      statusEl.innerText = "Read: " + (cleanText.trim().slice(0, 60) || "Scanning...");
+
+      const matchedWord = KEYWORDS.find(word => cleanText.includes(word));
+      if (matchedWord) {
         callTriggered = true;
-        detectedEl.innerText = "ALERT DETECTED! Calling...";
+        detectedEl.innerText = `ALERT DETECTED (${matchedWord.toUpperCase()})! Calling...`;
         window.location.href = `tel:${PHONE_NUMBER}`;
 
-        // 30 second baad scanner wapas reset hoga
         setTimeout(() => {
           callTriggered = false;
           detectedEl.innerText = "";
           statusEl.innerText = "Scanning resumed...";
         }, 30000);
       }
-    }, 2500);
+    }
+
+    init().catch(err => { statusEl.innerText = "Error: " + err.message; });
   </script>
 </body>
 </html>
